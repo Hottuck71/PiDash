@@ -1,0 +1,15 @@
+[Unit]
+Description=PiDash first-boot setup and updates
+Wants=network-online.target
+After=network-online.target NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /boot/firmware/pidash/setup.sh
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=0
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+Copy videos into this folder and PiDash plays them in the slideshow, between
+the pictures from the "photos" folder, behind the calendar and weather.
+
+- MP4, MOV and most others work. They play without sound.
+- The Pi makes a small copy of each new video first, which takes a few
+  minutes (4K: much longer). Your file is not changed.
+- Photos and videos share about 400 MB: roughly 3 minutes of phone video.
+  Short clips saved from a chat are much smaller.
+- Turn the Pi off before taking the SD card out.
+- VIDEO_SECONDS in dashboard-settings.txt sets how long a video may play.

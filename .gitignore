@@ -1,0 +1,21 @@
+# big or private: never upload
+build/dl/
+build/outputs/
+build/venv/
+*.img
+*.img.xz
+__pycache__/
+*.pyc
+pi-dashboard/app/data/
+*-log.txt
+
+# your own pictures and videos
+pi-dashboard/boot/photos/*
+!pi-dashboard/boot/photos/PUT-PHOTOS-HERE.txt
+pi-dashboard/boot/videos/*
+!pi-dashboard/boot/videos/PUT-VIDEOS-HERE.txt
+
+# copies of a filled-in settings file
+dashboard-settings.txt
+!pi-dashboard/boot/dashboard-settings.txt
+.claude/

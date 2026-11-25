@@ -1,0 +1,9 @@
+Copy pictures into this folder and PiDash shows them as a slideshow behind
+the calendar and weather. Videos go in the "videos" folder. With nothing in
+either folder, the background is dark.
+
+- JPG, PNG, WEBP, GIF and BMP work. iPhone HEIC photos do not; save those as
+  JPG first.
+- Photos and videos share about 400 MB (roughly 100 phone photos).
+- Turn the Pi off before taking the SD card out.
+- PHOTO_SECONDS in dashboard-settings.txt sets how long each picture stays up.

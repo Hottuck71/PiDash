@@ -1,0 +1,156 @@
+#!/bin/bash
+# Watches the dashboard screen and restarts it when it freezes.
+# The page reports in every 20 seconds from inside a drawn frame; when that
+# stops while a screen is connected, the display is restarted.
+# Notes what happened in pidash-health-log.txt on the SD card.
+BOOT=/boot/firmware; [ -d "$BOOT/pidash" ] || BOOT=/boot
+CONF="${PIDASH_BOOT_SETTINGS:-$BOOT/dashboard-settings.txt}"
+DIR="${PIDASH_WATCH_DIR:-/var/lib/pidash-watchdog}"
+CARD="${PIDASH_CARD_LOG:-$BOOT/pidash-health-log.txt}"
+LOG="$DIR/health.log"
+URL="${PIDASH_URL:-http://127.0.0.1:8080}"
+SYS="${PIDASH_SYS:-/sys}"
+PROC="${PIDASH_PROC:-/proc}"
+TICK="${PIDASH_TICK:-20}"
+FROZEN=100       # seconds without a drawn frame
+START=300        # seconds the screen may take to start
+mkdir -p "$DIR"
+
+up()   { cut -d. -f1 "$PROC/uptime"; }
+note() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+mem()  { awk -v k="$1:" '$1 == k { v = int($2 / 1024) } END { print v + 0 }' "$PROC/meminfo"; }
+page() {  # what the dashboard says it is doing (videos, calendar)
+    local s; s=$(curl -fsS -m 5 "$URL/api/stats" 2>/dev/null | tr -d '"' | cut -c1-200); [ -n "$s" ] && echo "$s, "
+}
+video() { case "$(page)" in "video playing"*) return 0 ;; esac; return 1; }
+video_trouble() {  # twice in trouble while a video played: leave videos out
+    video || return 1
+    vfail=$((vfail + 1))
+    [ "$vfail" -ge 2 ] && [ ! -e "$DIR/video-off" ] && { touch "$DIR/video-off"; note "videos turned off: the screen got stuck twice while one played"; }
+    return 0
+}
+stop_converter() {  # a video too heavy to be made small here; it is not tried again
+    pgrep -x ffmpeg >/dev/null || return 1
+    pkill -KILL -x ffmpeg; note "stopped preparing a video: too much for the Pi, $(stats)"
+}
+stats() {
+    local t="" v=""
+    t=$(cat "$SYS/class/thermal/thermal_zone0/temp" 2>/dev/null) && t="temp $((t / 1000))C"
+    v=$(timeout 5 vcgencmd get_throttled 2>/dev/null)
+    echo "$(page)free $(mem MemAvailable) MB, swap used $(( $(mem SwapTotal) - $(mem SwapFree) )) of $(mem SwapTotal) MB, load $(cut -d' ' -f1 "$PROC/loadavg"), $t $v"
+}
+to_card() {  # last part of the log, for reading on a PC
+    tail -n 250 "$LOG" > "$LOG.tmp" && cat "$LOG.tmp" > "$LOG" && rm -f "$LOG.tmp"
+    sed 's/$/\r/' "$LOG" > "$CARD.new" 2>/dev/null && mv -f "$CARD.new" "$CARD" && sync -f "$CARD" 2>/dev/null
+}
+why() {  # anything the system said that explains a freeze
+    journalctl -k -b -n 300 --no-pager -o cat 2>/dev/null |
+        grep -iE 'out of memory|oom|killed process|vc4|v3d|voltage|mmc.*(error|timeout)|brcmf.*(fail|error)|hung|blocked for' | tail -n 8 | sed 's/^/    kernel: /' >> "$LOG"
+    journalctl -u pidash-kiosk -b -n 8 --no-pager -o cat 2>/dev/null | cut -c1-200 | sed 's/^/    screen: /' >> "$LOG"
+    ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -n 4 | awk '{ printf "    memory: %d MB %s\n", $1 / 1024, $2 }' >> "$LOG"
+}
+render() {   # what the settings file asks for
+    sed -n "s/^[[:space:]]*SCREEN_RENDER[[:space:]]*=[[:space:]]*[\"']\{0,1\}\([a-zA-Z]*\).*/\1/p" "$CONF" 2>/dev/null | tail -n1 | tr 'A-Z' 'a-z'
+}
+mode() { local m; m=$(render); case "$m" in gpu|software) ;; *) m=$(cat "$DIR/mode" 2>/dev/null) ;; esac; [ "$m" = gpu ] && echo gpu || echo software; }
+flip() {
+    case "$(render)" in gpu|software) return ;; esac   # chosen by hand
+    if [ "$(mode)" = gpu ]; then echo software > "$DIR/mode"; else echo gpu > "$DIR/mode"; fi
+    note "trying the other way of drawing: $(mode)"
+}
+restarts() { local n; n=$(systemctl show -p NRestarts --value pidash-kiosk.service 2>/dev/null); echo "${n:-0}"; }
+restart_screen() {
+    was_ok=0; nobeat=0; crash0=0
+    timeout 20 systemctl kill -s KILL pidash-kiosk.service
+    pkill -KILL -x cage; pkill -KILL -f pidash-chromium
+    sleep 2
+    timeout 60 systemctl restart --no-block pidash-kiosk.service
+}
+screen_on() {  # is a display connected? (do not restart because the TV is off)
+    local s found=1
+    for s in "$SYS"/class/drm/card*-*/status; do
+        [ -e "$s" ] || continue
+        grep -qx connected "$s" 2>/dev/null && return 0
+        found=0
+    done
+    [ "$found" = 1 ]    # no information: assume yes
+}
+kiosk_age() {
+    local t; t=$(systemctl show -p ActiveEnterTimestampMonotonic --value pidash-kiosk.service 2>/dev/null)
+    echo $(( $(up) - ${t:-0} / 1000000 ))
+}
+trap 'note "stopped normally"; to_card; exit 0' TERM INT
+
+if [ -s "$LOG" ] && ! tail -n1 "$LOG" | grep -q "stopped normally"; then
+    note "--- the run above ended without a shutdown (unplugged, power problem, or the whole Pi locked up)"
+fi
+note "started, drawing with $(mode), PiDash $(cat /var/lib/pi-dashboard/.installed-version 2>/dev/null | cut -c1-8), $(stats)"
+to_card
+
+last_stat=$(up); srv_bad=0; low=0; freezes=0; off_at=-1000; was_ok=0; inactive=0; nobeat=0; crash0=$(restarts); oks=0; vfail=0
+while :; do
+    sleep "$TICK" & wait $!
+    now=$(up)
+    if [ $((now - last_stat)) -ge 300 ]; then last_stat=$now; note "ok, $(stats)"; oks=$((oks + 1)); [ $((oks % 6)) = 0 ] && to_card; fi
+
+    # keeps crashing before it ever draws: try the other way
+    crashes=$(restarts); [ "$crashes" -lt "$crash0" ] && crash0=$crashes
+    if [ "$was_ok" = 1 ]; then
+        [ "$crashes" -gt "$crash0" ] && { note "screen program stopped by itself and was started again, $(stats)"; why; video_trouble; to_card; was_ok=0; }
+        crash0=$crashes
+    elif [ $((crashes - crash0)) -ge 4 ]; then
+        note "screen program keeps stopping, drawing with $(mode), $(stats)"; why; flip; restart_screen; to_card; continue
+    fi
+
+    if ! systemctl is-active -q pidash-kiosk.service; then
+        # systemd restarts it by itself; only help if it gave up
+        inactive=$((inactive + 1))
+        if [ "$inactive" -ge 9 ]; then note "screen service was not running"; why; flip; systemctl reset-failed pidash-kiosk.service; restart_screen; to_card; inactive=0; fi
+        continue
+    fi
+    inactive=0
+
+    alive=$(curl -fsS -m 10 "$URL/api/health" 2>/dev/null)
+    if ! [[ "$alive" =~ ^-?[0-9]+$ ]]; then
+        srv_bad=$((srv_bad + 1))
+        if [ "$srv_bad" -ge 6 ]; then
+            note "dashboard program did not answer, restarting it, $(stats)"; why
+            timeout 30 systemctl kill -s KILL pi-dashboard.service; timeout 60 systemctl restart --no-block pi-dashboard.service
+            to_card; srv_bad=0
+        fi
+        continue
+    fi
+    srv_bad=0
+
+    if ! screen_on; then off_at=$now; continue; fi
+    [ $((now - off_at)) -lt 120 ] && continue
+
+    age=$(kiosk_age)
+    if [ "$alive" -ge 0 ] && [ "$alive" -le "$age" ]; then
+        if [ "$alive" -gt "$FROZEN" ]; then
+            note "SCREEN FROZEN for $alive s after running $age s, drawing with $(mode), restarting it, $(stats)"; why
+            stop_converter
+            video_trouble || freezes=$((freezes + 1))
+            if [ "$freezes" -ge 2 ]; then flip; freezes=0; fi
+            restart_screen; to_card; continue
+        fi
+        nobeat=0
+        [ "$was_ok" = 1 ] || { was_ok=1; note "screen is drawing (after $age s), $(mode), $(stats)"; to_card; }
+    elif nobeat=$((nobeat + 1)); [ "$age" -gt "$START" ] && [ "$nobeat" -ge 5 ]; then
+        note "screen did not start in $age s, drawing with $(mode), $(stats)"; why
+        flip; restart_screen; to_card; continue
+    fi
+
+    # memory nearly gone: restart now rather than freeze
+    if [ "$(mem MemAvailable)" -lt 20 ] && [ "$(mem SwapFree)" -lt 40 ]; then low=$((low + 1)); else low=0; fi
+    if [ "$low" -ge 2 ] && stop_converter; then to_card; low=0; continue; fi
+    if [ "$low" -ge 4 ]; then
+        note "memory nearly full, restarting the screen, $(stats)"; why
+        restart_screen; to_card; low=0; continue
+    fi
+
+    # a fresh start every night keeps memory tidy
+    if [ "$age" -gt 72000 ] && [ "$(date +%H)" = 04 ]; then
+        note "nightly restart of the screen, $(stats)"; restart_screen; to_card
+    fi
+done

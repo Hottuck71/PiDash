@@ -1,0 +1,49 @@
+#!/bin/sh
+# Starts Chromium full-screen (via the cage Wayland kiosk compositor)
+# pointed at the local PiDash server.
+#
+# Two ways of drawing the screen:
+#   software - the processor draws; least memory, nothing to hang in the 3D chip
+#   gpu      - the 3D chip draws (how PiDash worked before)
+# SCREEN_RENDER in dashboard-settings.txt picks one; with "auto" the watchdog
+# changes over by itself if the screen does not start or keeps freezing.
+printf '\033[?25l' >&0 2>/dev/null   # no blinking cursor
+pidash-splash fb start 60 >/dev/null 2>&1 &   # until cage takes over the screen
+for i in $(seq 1 90); do
+    curl -fs -m 5 -o /dev/null http://127.0.0.1:8080/api/info && break
+    sleep 1
+done
+getconf() {
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*[\"']\{0,1\}\([^\"'#]*\).*/\1/p" "$PIDASH_BOOT_SETTINGS" 2>/dev/null | tail -n1 | tr -d '\r ' | tr 'A-Z' 'a-z'
+}
+MODE=$(getconf SCREEN_RENDER)
+case "$MODE" in software|gpu) ;; *) MODE=$(cat /var/lib/pidash-watchdog/mode 2>/dev/null) ;; esac
+[ "$MODE" = gpu ] || MODE=software
+echo "PiDash screen: drawing with $MODE"
+DRAW=""
+if [ "$MODE" = software ]; then
+    export WLR_RENDERER=pixman
+    DRAW="--disable-gpu --disable-software-rasterizer"
+fi
+PIDASH_SCREEN_SIZE=$(getconf SCREEN_SIZE); export PIDASH_SCREEN_SIZE
+
+BROWSER=$(command -v chromium || command -v chromium-browser)
+PROFILE=/var/tmp/pidash-chromium     # on the SD card: /tmp is in memory
+rm -rf "$PROFILE" /tmp/pidash-chromium
+# cage will not start without a keyboard/mouse/touchscreen unless this is set
+export WLR_LIBINPUT_NO_DEVICES=1
+# --no-memcheck skips the low-memory warning box on boards under 1 GB of RAM
+exec cage -d -s -- /usr/local/bin/pidash-screen "$BROWSER" $DRAW \
+    --no-memcheck \
+    --kiosk --noerrdialogs --disable-infobars --no-first-run --no-default-browser-check --incognito \
+    --ozone-platform=wayland --password-store=basic --force-device-scale-factor=1 \
+    --enable-low-end-device-mode --renderer-process-limit=1 --disable-site-isolation-trials \
+    --disk-cache-dir=/dev/null --disk-cache-size=1 --js-flags=--max-old-space-size=96 \
+    --disable-extensions --disable-component-update --disable-background-networking \
+    --disable-sync --disable-default-apps --disable-breakpad --disable-domain-reliability \
+    --disable-renderer-accessibility --disable-smooth-scrolling --mute-audio \
+    --disable-features=Translate,MediaRouter,OptimizationHints,OptimizationGuideModelDownloading,SpareRendererForSitePerProcess,BackForwardCache,AudioServiceOutOfProcess,InterestFeedContentSuggestions \
+    --disable-pinch --overscroll-history-navigation=0 --force-dark-mode \
+    --check-for-update-interval=31536000 --autoplay-policy=no-user-gesture-required \
+    --user-data-dir="$PROFILE" \
+    "http://127.0.0.1:8080/?kiosk=1"

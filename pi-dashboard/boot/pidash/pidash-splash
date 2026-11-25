@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""PiDash splash screen. No extra packages needed.
+
+  pidash-splash fb NAME [SECONDS]   picture straight onto the screen (startup, setup)
+  pidash-splash wayland             picture inside cage until the dashboard is drawn
+
+NAME is a picture in the "splash" folder (start, setup, update, wifi, retry).
+With SECONDS the picture is put back every now and then, because the screen
+driver may start later or the text console may wipe it.
+"""
+import os
+import re
+import socket
+import struct
+import sys
+import time
+import zlib
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DIRS = [os.path.join(HERE, "splash"), "/usr/local/share/pidash-splash"]
+GFX = os.environ.get("PIDASH_FB_SYS", "/sys/class/graphics/fb0")
+DEV = os.environ.get("PIDASH_FB", "/dev/fb0")
+CONF = os.environ.get("PIDASH_BOOT_SETTINGS", "/boot/firmware/dashboard-settings.txt")
+
+
+def load(name):
+    """(width, height, one byte per pixel, 256 colors as r, g, b)"""
+    for d in DIRS:
+        p = os.path.join(d, name + ".bin")
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                raw = zlib.decompress(f.read())
+            w, h = struct.unpack("<HH", raw[:4])
+            return w, h, raw[772:772 + w * h], raw[4:772]
+    raise SystemExit("no picture " + name)
+
+
+def rotation():
+    try:
+        with open(CONF, encoding="utf-8", errors="replace") as f:
+            m = re.findall(r"(?m)^\s*ROTATION\s*=\s*[\"']?(\d+)", f.read())
+        return int(m[-1]) if m else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def turn(w, h, px, rot):
+    if rot == 180:
+        return w, h, px[::-1]
+    if rot == 90:    # clockwise
+        return h, w, b"".join(px[(h - 1) * w + x::-w] for x in range(w))
+    if rot == 270:
+        return h, w, b"".join(px[x::w] for x in range(w - 1, -1, -1))
+    return w, h, px
+
+
+def frame(name, W, H, stride, bpp):
+    """The whole screen as bytes, picture in the middle."""
+    w, h, px, pal = load(name + "-big" if min(W, H) >= 1000 else name)
+    w, h, px = turn(w, h, px, rotation())
+    if w > W or h > H:  # tiny screen: half size
+        px = b"".join(px[y * w:(y + 1) * w][::2] for y in range(0, h - h % 2, 2))
+        w, h = (w + 1) // 2, h // 2
+    if w > W:
+        x = (w - W) // 2
+        px = b"".join(px[y * w + x:y * w + x + W] for y in range(h))
+        w = W
+    if h > H:
+        y = (h - H) // 2
+        px, h = px[y * w:(y + H) * w], H
+    if bpp == 16:
+        v = [(pal[i] * 31 + 127) // 255 << 11 | (pal[i + 1] * 63 + 127) // 255 << 5 | (pal[i + 2] * 31 + 127) // 255 for i in range(0, 768, 3)]
+        parts = [bytes(c & 255 for c in v), bytes(c >> 8 for c in v)]
+    elif bpp in (24, 32):
+        parts = [pal[2::3], pal[1::3], pal[0::3]] + ([b"\xff" * 256] if bpp == 32 else [])
+    else:
+        raise SystemExit("unknown screen format")
+    n = len(parts)
+    buf = bytearray(len(px) * n)
+    for i, table in enumerate(parts):
+        buf[i::n] = px.translate(table)
+    back = bytes(t[px[0]] for t in parts)  # the corner of the picture is the background
+    line = (back * W).ljust(stride, b"\0")
+    left, right = back * ((W - w) // 2), back * (W - w - (W - w) // 2)
+    top = (H - h) // 2
+    out = [line] * top
+    for y in range(h):
+        out.append((left + buf[y * w * n:(y + 1) * w * n] + right).ljust(stride, b"\0"))
+    return b"".join(out + [line] * (H - h - top))
+
+
+def num(name):
+    with open(os.path.join(GFX, name)) as f:
+        return f.read().strip()
+
+
+_ready = {}
+
+
+def draw_fb(name):
+    W, H = (int(x) for x in num("virtual_size").split(","))
+    m = re.match(r"\w:(\d+)x(\d+)", num("modes").split("\n")[0]) if os.path.exists(os.path.join(GFX, "modes")) else None
+    if m and int(m.group(1)) <= W and int(m.group(2)) <= H:
+        W, H = int(m.group(1)), int(m.group(2))
+    key = (name, W, H, int(num("stride")), int(num("bits_per_pixel")))
+    if (key, rotation()) not in _ready:  # the settings file may become readable later
+        _ready.clear()
+        _ready[key, rotation()] = frame(*key)
+    data = next(iter(_ready.values()))
+    with open(DEV, "r+b", buffering=0) as f:
+        view = memoryview(data)
+        while view:
+            n = f.write(view[:1 << 20])
+            if not n:
+                break
+            view = view[n:]
+
+
+def cage_running():
+    for p in os.listdir("/proc"):
+        if p.isdigit():
+            try:
+                with open("/proc/%s/comm" % p) as f:
+                    if f.read().strip() == "cage":
+                        return True
+            except OSError:
+                pass
+    return False
+
+
+def fb(name, seconds=0.0):
+    """Draw now; keep it there for a while when asked to."""
+    end = time.monotonic() + seconds
+    wait = 0.3
+    while True:
+        try:
+            draw_fb(name)
+            wait = min(5, wait * 2)
+        except (OSError, ValueError):  # the screen driver is not there yet
+            pass
+        if time.monotonic() + wait > end:
+            return
+        time.sleep(wait)
+        if os.path.isdir("/proc/1") and cage_running():
+            return
+
+
+class Wayland:
+    """Just enough of the Wayland protocol to show one picture."""
+
+    def __init__(self):
+        name = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
+        self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.s.connect(os.path.join(os.environ["XDG_RUNTIME_DIR"], name))
+        self.last, self.buf, self.globals = 1, b"", {}
+        self.size, self.shown, self.closed = (0, 0), None, False
+        self.fds = []
+
+    def new(self):
+        self.last += 1
+        return self.last
+
+    def send(self, obj, op, *args, fd=None):
+        body = b""
+        for a in args:
+            if isinstance(a, str):
+                b = a.encode() + b"\0"
+                body += struct.pack("=I", len(b)) + b + b"\0" * (-len(b) % 4)
+            else:
+                body += struct.pack("=I", a & 0xFFFFFFFF)
+        msg = struct.pack("=II", obj, (8 + len(body)) << 16 | op) + body
+        if fd is None:
+            self.s.sendall(msg)
+        else:
+            socket.send_fds(self.s, [msg], [fd])
+
+    def events(self):
+        data = self.s.recv(65536)
+        if not data:
+            raise ConnectionError("cage is gone")
+        self.buf += data
+        while len(self.buf) >= 8:
+            obj, x = struct.unpack("=II", self.buf[:8])
+            if len(self.buf) < x >> 16:
+                break
+            yield obj, x & 0xFFFF, self.buf[8:x >> 16]
+            self.buf = self.buf[x >> 16:]
+
+    def bind(self, iface, version):
+        num, have = self.globals[iface]
+        i = self.new()
+        self.send(self.registry, 0, num, iface, min(version, have), i)
+        return i
+
+    def start(self):
+        self.registry = self.new()
+        self.send(1, 1, self.registry)      # wl_display.get_registry
+        done = self.new()
+        self.send(1, 0, done)               # wl_display.sync
+        ready = False
+        while not ready:
+            for obj, op, b in self.events():
+                if obj == 1 and op == 0:
+                    raise ConnectionError(repr(b))
+                if obj == self.registry and op == 0:
+                    num, n = struct.unpack("=II", b[:8])
+                    iface = b[8:8 + n - 1].decode()
+                    self.globals[iface] = (num, struct.unpack("=I", b[8 + n + (-n % 4):][:4])[0])
+                elif obj == done:
+                    ready = True
+        self.comp = self.bind("wl_compositor", 1)
+        self.shm = self.bind("wl_shm", 1)
+        self.wm = self.bind("xdg_wm_base", 1)
+        self.surface = self.new()
+        self.send(self.comp, 0, self.surface)                 # create_surface
+        self.xdg = self.new()
+        self.send(self.wm, 2, self.xdg, self.surface)         # get_xdg_surface
+        self.top = self.new()
+        self.send(self.xdg, 1, self.top)                      # get_toplevel
+        self.send(self.top, 2, "PiDash")                      # set_title
+        self.send(self.top, 3, "pidash-splash")               # set_app_id
+        self.send(self.surface, 6)                            # commit
+
+    def draw(self):
+        W, H = self.size if all(self.size) else (1280, 720)
+        if self.shown == (W, H):
+            return self.send(self.surface, 6)
+        data = frame("start", W, H, W * 4, 32)
+        fd = os.memfd_create("pidash-splash")
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+        pool, buf = self.new(), self.new()
+        self.send(self.shm, 0, pool, len(data), fd=fd)        # create_pool
+        os.close(fd)
+        self.send(pool, 0, buf, 0, W, H, W * 4, 1)            # create_buffer, XRGB8888
+        self.send(pool, 1)                                    # destroy the pool (the buffer stays)
+        self.send(self.surface, 1, buf, 0, 0)                 # attach
+        self.send(self.surface, 2, 0, 0, W, H)                # damage
+        self.send(self.surface, 6)                            # commit
+        self.shown = (W, H)
+
+    def handle(self):
+        for obj, op, b in self.events():
+            if obj == 1 and op == 0:
+                raise ConnectionError(repr(b))
+            if obj == self.wm and op == 0:                    # ping
+                self.send(self.wm, 3, *struct.unpack("=I", b))
+            elif obj == self.top and op == 0:                 # size
+                self.size = struct.unpack("=ii", b[:8])
+            elif obj == self.top and op == 1:
+                self.closed = True
+            elif obj == self.xdg and op == 0:                 # configure
+                self.send(self.xdg, 4, *struct.unpack("=I", b))
+                self.draw()
+
+
+def dashboard_drawn(since):
+    """Has the page reported a drawn frame after this splash started?"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(os.environ.get("PIDASH_URL", "http://127.0.0.1:8080") + "/api/health", timeout=3) as r:
+            ago = int(r.read())
+        return 0 <= ago < time.monotonic() - since - 1
+    except (OSError, ValueError):
+        return False
+
+
+def wayland():
+    import select
+    try:
+        os.nice(5)
+        w = Wayland()
+        w.start()
+        since = time.monotonic()
+        check = since + 10
+        while not w.closed:
+            if select.select([w.s], [], [], 2)[0]:
+                w.handle()
+            if time.monotonic() > check:
+                check = time.monotonic() + 2
+                if dashboard_drawn(since):
+                    return
+    except (OSError, KeyError, struct.error) as ex:
+        print("splash:", ex)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["fb"] and len(sys.argv) > 2:
+        fb(sys.argv[2], float(sys.argv[3]) if len(sys.argv) > 3 else 0)
+    elif sys.argv[1:2] == ["wayland"]:
+        wayland()
+    else:
+        print(__doc__)

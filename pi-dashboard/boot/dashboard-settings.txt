@@ -1,0 +1,78 @@
+# =====================================================================
+#  PiDash settings  -  edit this file on your PC after flashing the SD
+#  card (it is on the "bootfs" drive), save, then put the card in the Pi.
+#  Lines starting with # are ignored. Keep the quotes.
+# =====================================================================
+
+# --- Wi-Fi (required: the Pi downloads the screen software on 1st boot)
+WIFI_SSID="YourWiFiName"
+WIFI_PASSWORD="YourWiFiPassword"
+# Two-letter country code (US, GB, CA, AU, DE ...)
+WIFI_COUNTRY="US"
+
+# --- Your Cozi calendar ---------------------------------------------
+# In Cozi on the web: Settings > Shared Cozi Calendars > copy the
+# calendar feed (ICS) link and paste it here.
+COZI_URL=""
+CALENDAR_NAME_1="Family"
+
+# Optional extra calendars (Google/Outlook/iCloud secret iCal links)
+#CALENDAR_URL_2=""
+#CALENDAR_NAME_2="Work"
+#CALENDAR_COLOR_2="#ffb74d"
+
+# Look for changes on the calendars every so many minutes
+CALENDAR_MINUTES="2"
+
+# --- Weather -----------------------------------------------------------
+# City name or "City, State"
+WEATHER_LOCATION="New York"
+# imperial (F, mph) or metric (C, km/h)
+UNITS="imperial"
+
+# --- System ------------------------------------------------------------
+# Time zone name, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+TIMEZONE="America/New_York"
+# Name of the Pi on your network
+HOSTNAME="dashboard"
+# Login for keyboard / SSH access. CHANGE THE PASSWORD.
+USERNAME="pi"
+PASSWORD="changeme"
+# Turn on SSH remote login (yes/no)
+ENABLE_SSH="no"
+
+# --- Look --------------------------------------------------------------
+# dark, light, black or warm
+THEME="dark"
+# stacked, classic, mirrored, focus or bigclock
+LAYOUT="stacked"
+# The boxes on the overview, in order. Choose from:
+# clock, weather, agenda, countdowns, forecast
+WIDGETS="clock,weather,agenda,countdowns"
+# Background: put pictures in the "photos" folder and videos in the "videos"
+# folder on this drive. Seconds each picture stays up (0 = no background)
+PHOTO_SECONDS="30"
+# Longest time a video plays, in seconds, up to 300 (0 = no videos)
+VIDEO_SECONDS="60"
+# Change page by itself every so many seconds (0 = stay on the overview)
+AUTO_CYCLE="0"
+# Dim the screen at night: "22:00-06:30", or "no"
+NIGHT_DIM="22:00-06:30"
+# Countdowns: date, space, name (COUNTDOWN_1 to COUNTDOWN_20)
+#COUNTDOWN_1="2026-12-25 Christmas"
+
+# --- Screen ------------------------------------------------------------
+# Rotate the picture for a portrait-mounted screen: 0, 90, 180 or 270
+ROTATION="0"
+CLOCK_24H="no"
+# 720 = run a big wide screen at 1280x720 (much easier for the Pi),
+# native = full sharpness
+SCREEN_SIZE="720"
+# How the screen is drawn: auto, software or gpu. Leave on auto.
+SCREEN_RENDER="auto"
+
+# Physical push buttons (wire each between the GPIO pin and GND):
+#   GPIO5 = previous page, GPIO6 = next page,
+#   GPIO13 = change layout, GPIO19 = move widgets,
+#   GPIO26 = check the calendar now
+GPIO_BUTTONS="no"

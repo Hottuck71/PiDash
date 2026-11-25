@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PiDash</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="root" class="theme-dark">
+  <div id="bg"></div>
+  <div id="pages">
+    <section class="page" data-page="home"><div class="home-grid layout-stacked" id="homeGrid">
+      <div class="slot slot-a"></div><div class="slot slot-b"></div><div class="slot slot-c"></div><div class="slot slot-d"></div>
+    </div></section>
+    <section class="page" data-page="week"><div class="week" id="weekView"></div></section>
+    <section class="page" data-page="month"><div class="month" id="monthView"></div></section>
+    <section class="page" data-page="agenda"><div class="panel" style="height:100%"><h2>Upcoming <span class="sub" id="agendaSub"></span></h2><div id="agendaView"></div></div></section>
+    <section class="page" data-page="weather"><div class="wx-page" id="weatherView"></div></section>
+  </div>
+  <div id="statusbar"><span id="stLeft"></span><div id="dots"></div><span id="stRight"></span></div>
+  <div id="cycleBar"></div>
+  <button id="menuBtn" aria-label="Menu">☰</button>
+
+  <div class="overlay" id="menu"><div class="sheet">
+    <h3>Options <button class="btn ghost" data-close>✕</button></h3>
+    <div class="menu-sec"><div class="lbl">Page</div><div class="chips" id="mPages"></div></div>
+    <div class="menu-sec"><div class="lbl">Home layout</div><div class="chips" id="mLayouts"></div></div>
+    <div class="menu-sec"><div class="lbl">Widget positions</div><div class="chips">
+      <button class="chip" data-act="swap">⟳ Rotate widgets</button>
+      <button class="chip" data-act="swapback">⟲ Rotate back</button></div></div>
+    <div class="menu-sec"><div class="lbl">Theme</div><div class="chips" id="mThemes"></div></div>
+    <div class="menu-sec"><div class="lbl">Screen rotation</div><div class="chips" id="mRot"></div></div>
+    <div class="menu-sec"><div class="lbl">Auto-cycle pages</div><div class="chips" id="mCycle"></div></div>
+    <div class="menu-sec"><div class="lbl">Photo and video background: time per photo</div><div class="chips" id="mPhotos"></div></div>
+    <div class="menu-sec"><div class="lbl">Text size</div><div class="chips" id="mFont"></div></div>
+    <div class="menu-sec"><div class="lbl">More</div><div class="chips">
+      <button class="chip" data-act="refresh">↻ Check calendar now</button>
+      <button class="chip" data-act="clock24">12/24 h clock</button></div></div>
+    <div class="muted" style="font-size:.8rem" id="mInfo"></div>
+  </div></div>
+
+  <div id="toast"></div>
+  <div id="dim"></div>
+  <div id="beat"></div>
+  <div id="splash"><img src="/static/splash.png" alt=""></div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

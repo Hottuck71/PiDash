@@ -1,0 +1,18 @@
+#cloud-config
+# PiDash first-boot hook. Don't edit this file - put your settings in
+# dashboard-settings.txt instead. (If you flash with Raspberry Pi Imager,
+# choose "NO" when it offers OS customisation, or this file is replaced.)
+
+# the login user is created by PiDash setup from dashboard-settings.txt
+users: []
+ssh_pwauth: true
+preserve_hostname: true
+
+bootcmd:
+  - [sh, -c, "[ -e /var/lib/pi-dashboard/.setup-done ] || systemd-run --no-block python3 /boot/firmware/pidash/pidash-splash fb setup 7200"]
+
+runcmd:
+  - [cp, /boot/firmware/pidash/pidash-setup.service, /etc/systemd/system/pidash-setup.service]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, pidash-setup.service]
+  - [systemctl, start, --no-block, pidash-setup.service]
