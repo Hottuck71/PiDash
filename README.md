@@ -84,7 +84,7 @@ also contains Raspberry Pi OS, whose parts have their own licenses (see `/usr/sh
 
 ## Credits
 
-Designed by [Hottuck71](https://github.com/Hottuck71). The code was written with
+Designed by [Hottuck71](https://github.com/Hottuck71). Some code was written with
 [Claude Code](https://claude.com/claude-code), Anthropic's AI coding tool.
 
 Not connected with Cozi, Raspberry Pi Ltd or Open-Meteo. Their names belong to them.
